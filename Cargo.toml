@@ -1,0 +1,18 @@
+[package]
+name = "kaleidohash"
+version = "0.1.0"
+edition = "2018"
+
+[[bin]]
+name = "auth"
+path = "src/auth.rs"
+
+[[bin]]
+name = "kaleidohash"
+path = "src/kaleidohash.rs"
+
+[dependencies]
+hex = "0.4.3"
+sha-1 = "0.9.8"
+
+[features]
