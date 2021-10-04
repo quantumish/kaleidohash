@@ -12,7 +12,10 @@ name = "kaleidohash"
 path = "src/kaleidohash.rs"
 
 [dependencies]
+clap = "3.0.0-beta.2"
 hex = "0.4.3"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
 sha-1 = "0.9.8"
 
 [features]
