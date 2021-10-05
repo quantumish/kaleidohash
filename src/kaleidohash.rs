@@ -1,9 +1,9 @@
 use rand::{thread_rng, Rng};
-use rand::distributions::{Alphanumeric, Uniform, Standard};
+use rand::distributions::Alphanumeric;
 use sha1::{Sha1, Digest};
 
-const CHAIN_LEN: usize = 2000;
-const NUM_CHAINS: usize = 40000;
+const CHAIN_LEN: usize = 2;
+const NUM_CHAINS: usize = 4;
 
 
 // fn str_to_int(s: Vec<u8>) -> u128 {
@@ -52,8 +52,9 @@ fn sha1_hash (s: Vec<u8>) -> Vec<u8> {
 
 impl RainbowChain {
     fn new() -> RainbowChain {
-	let rng = thread_rng();
-	let original: Vec<u8> = rng.sample_iter(&Alphanumeric).take(5).collect();
+	// let rng = thread_rng();
+	// let original: Vec<u8> = rng.sample_iter(&Alphanumeric).take(5).collect();
+	let original: Vec<u8> = b"paSsw".to_vec();
 	let mut string: Vec<u8> = original.clone();
 	// print!("{}", String::from_utf8(string.clone()).unwrap());
 	let mut hash: Vec<u8> = sha1_hash(string);
@@ -79,17 +80,9 @@ fn reduce(hash: Vec<u8>, i: usize) -> Vec<u8>
 	out.push(((hash[j] as usize + i) % 62) as u8);
     }
     alpha_to_ascii(out)    
-}    
+}
 
-fn main() {
-    let mut chains: Vec<RainbowChain> = Vec::new();
-    println!("Generating rainbow table...");
-    let bar = indicatif::ProgressBar::new(NUM_CHAINS as u64);
-    for _i in 0..NUM_CHAINS {
-	chains.push(RainbowChain::new());
-	bar.inc(1);
-    }    
-    let target: Vec<u8> = vec![78,245,122,10,177,105,93,110,48,234,242,160,42,74,245,16,101,182,141,160];
+fn check_column(chains: &Vec<RainbowChain>, target: Vec<u8>) -> bool {
     for i in 0..NUM_CHAINS {
 	if target == chains.get(i).unwrap().last {
 	    let mut string: Vec<u8> = chains.get(i).unwrap().initial.clone();
@@ -99,24 +92,53 @@ fn main() {
 		hash = sha1_hash(string.clone());
 	    }
 	    println!("[CRACKED (END)] {}", String::from_utf8(string).unwrap());
-	    std::process::exit(0);
+	    return true;
 	}
     }
-   
-    let mut hash: Vec<u8> = target;
+    return false;
+}
+
+fn check_rows(chains: &Vec<RainbowChain>, target: Vec<u8>) -> bool {
+    let mut hash: Vec<u8> = target.clone();
     let mut string: Vec<u8>;
     for i in 0..CHAIN_LEN/2 {
 	string = reduce(hash, i);
 	hash = sha1_hash(string.clone());
 	for j in 0..NUM_CHAINS {
 	    if hash == chains.get(j).unwrap().last {
-		println!("[CRACKED] {}", String::from_utf8(string).unwrap());
-		std::process::exit(0);
+		let mut string2 = chains.get(j).unwrap().initial.clone();
+		let mut hash2: Vec<u8> = sha1_hash(string2.clone());
+		for k in 0..CHAIN_LEN/2 {
+		    string2 = reduce(hash2.clone(), k);
+		    hash2 = sha1_hash(string2.clone());
+		    if hash2 == target.clone() {
+			println!("[CRACKED] {}", String::from_utf8(string2).unwrap());
+			return true;
+		    }
+		}		
 	    }
 	}
     }
+    return false;
+}
 
-    println!("[ERROR] Not in table!")
+fn main() {
+    let mut chains: Vec<RainbowChain> = Vec::new();
+    println!("Generating rainbow table...");
+    let bar = indicatif::ProgressBar::new(NUM_CHAINS as u64);
+    for _i in 0..NUM_CHAINS {
+	chains.push(RainbowChain::new());
+	bar.inc(1);
+    }
+    println!("Done!");
+    let target: Vec<u8> = vec![78,245,122,10,177,105,93,110,48,234,242,160,42,74,245,16,101,182,141,160];
+    if check_column(&chains, target.clone()) == false {
+	println!("Checked last column!");
+	println!("{}", check_rows(&chains, target.clone()));
+	if check_rows(&chains, target.clone()) == false {
+	    println!("[ERROR] Not in table!");
+	}
+    }
     // for i in 0..NUM_CHAINS {
     // 	// Borrow checkers are fun.
 	// println!("{} {}",
