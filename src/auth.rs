@@ -2,7 +2,7 @@ use sha1::{Sha1, Digest};
 use clap::{AppSettings, Clap};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::fs::{File};
+use std::fs::File;
 use std::option::Option;
 
 #[derive(Clap)]
