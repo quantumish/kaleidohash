@@ -2,9 +2,10 @@ use rand::{thread_rng, Rng};
 use rand::distributions::Alphanumeric;
 use sha1::{Sha1, Digest};
 use std::time::Instant;
+use rayon::prelude::*;
 
 const CHAIN_LEN: usize = 20000;
-const NUM_CHAINS: usize = 4000;
+const NUM_CHAINS: usize = 40000;
 const PASS_SIZE: usize = 3;
 
 // fn str_to_int(s: Vec<u8>) -> u128 {
@@ -54,17 +55,17 @@ fn sha1_hash (s: Vec<u8>) -> Vec<u8> {
 impl RainbowChain {
     fn new() -> RainbowChain {
 	let rng = thread_rng();
-	let original: Vec<u8> = rng.sample_iter(&Alphanumeric).take(PASS_SIZE).collect();
-	// let original: Vec<u8> = b"paSsw".to_vec();
+	RainbowChain {
+	    initial: rng.sample_iter(&Alphanumeric).take(PASS_SIZE).collect(),
+	    last: Vec::new(),
+	}
+    }
+    fn forward(original: Vec<u8>) -> RainbowChain {
 	let mut string: Vec<u8> = original.clone();
-	// print!("{}", String::from_utf8(string.clone()).unwrap());
 	let mut hash: Vec<u8> = sha1_hash(string);
-	// print!(" {}\n", hex::encode(hash.clone()));
 	for i in 0..CHAIN_LEN/2 {
 	    string = reduce(hash, i);
-	    // print!("{}", String::from_utf8(string.clone()).unwrap());
 	    hash = sha1_hash(string);
-	    // print!(" {}\n", hex::encode(hash.clone()));
 	}
 	RainbowChain {
 	    initial: original,
@@ -100,6 +101,7 @@ fn check_column(chains: &Vec<RainbowChain>, target: Vec<u8>) -> bool {
 }
 
 fn check_rows(chains: &Vec<RainbowChain>, target: Vec<u8>) -> bool {
+    let start = Instant::now();
     let mut hash: Vec<u8> = target.clone();
     let mut string: Vec<u8>;
     for i in 0..CHAIN_LEN/2 {
@@ -117,21 +119,25 @@ fn check_rows(chains: &Vec<RainbowChain>, target: Vec<u8>) -> bool {
 		    string2 = reduce(hash2.clone(), k);
 		    hash2 = sha1_hash(string2.clone());
 		    // println!("{} {}\n", String::from_utf8(string2.clone()).unwrap(), hex::encode(hash2.clone()));		    
-		}		
+		}
+		return false;
 	    }
 	}
     }
-    return false;
+    false
 }
 
 fn main() {
+    println!("Generating {}x{} rainbow table...", CHAIN_LEN, NUM_CHAINS);
     let mut chains: Vec<RainbowChain> = Vec::new();
-    println!("Generating rainbow table...");
-    let bar = indicatif::ProgressBar::new(NUM_CHAINS as u64);
+    let init = Instant::now();
     for _i in 0..NUM_CHAINS {
 	chains.push(RainbowChain::new());
-	bar.inc(1);
     }
+    println!("Initialized in {:?}.", init.elapsed());
+    let gen = Instant::now();
+    chains = chains.par_iter().map(|i| RainbowChain::forward(i.initial.clone())).collect();
+    println!("Generated in {:?}.", gen.elapsed());
     let targets: Vec<Vec<u8>> = vec![
 	vec![169,153,62,54,71,6,129,106,186,62,37,113,120,80,194,108,156,208,216,157],
 	vec![27,163,110,98,0,100,14,221,6,101,69,34,250,17,55,200,199,43,79,176],
