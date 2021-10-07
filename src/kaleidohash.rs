@@ -101,7 +101,6 @@ fn check_column(chains: &Vec<RainbowChain>, target: Vec<u8>) -> bool {
 }
 
 fn check_rows(chains: &Vec<RainbowChain>, target: Vec<u8>) -> bool {
-    let start = Instant::now();
     let mut hash: Vec<u8> = target.clone();
     let mut string: Vec<u8>;
     for i in 0..CHAIN_LEN/2 {
@@ -113,12 +112,11 @@ fn check_rows(chains: &Vec<RainbowChain>, target: Vec<u8>) -> bool {
 		let mut hash2: Vec<u8> = sha1_hash(string2.clone());
 		for k in 0..CHAIN_LEN/2 {
 		    if hash2 == target.clone() {
-			print!("[CRACKED] {}", String::from_utf8(string2).unwrap());
+			print!("| \x1b[32m✓\x1b[0m {}", String::from_utf8(string2).unwrap());
 			return true;
 		    }
 		    string2 = reduce(hash2.clone(), k);
 		    hash2 = sha1_hash(string2.clone());
-		    // println!("{} {}\n", String::from_utf8(string2.clone()).unwrap(), hex::encode(hash2.clone()));		    
 		}
 		return false;
 	    }
@@ -128,31 +126,37 @@ fn check_rows(chains: &Vec<RainbowChain>, target: Vec<u8>) -> bool {
 }
 
 fn main() {
-    println!("Generating {}x{} rainbow table...", CHAIN_LEN, NUM_CHAINS);
+    println!("🌈 Generating {}x{} rainbow table...", CHAIN_LEN, NUM_CHAINS);
     let mut chains: Vec<RainbowChain> = Vec::new();
     let init = Instant::now();
     for _i in 0..NUM_CHAINS {
 	chains.push(RainbowChain::new());
     }
-    println!("Initialized in {:?}.", init.elapsed());
+    println!("| Initialized in {:?}.", init.elapsed());
     let gen = Instant::now();
     chains = chains.par_iter().map(|i| RainbowChain::forward(i.initial.clone())).collect();
-    println!("Generated in {:?}.", gen.elapsed());
+    println!("└ Generated in {:?}.", gen.elapsed());
     let targets: Vec<Vec<u8>> = vec![
 	vec![169,153,62,54,71,6,129,106,186,62,37,113,120,80,194,108,156,208,216,157],
 	vec![27,163,110,98,0,100,14,221,6,101,69,34,250,17,55,200,199,43,79,176],
 	vec![105,191,28,123,95,58,228,150,169,106,23,124,164,49,197,198,146,57,250,140],
     ];
+    let length = targets.len();
+    println!("\n🔨 Cracking passwords...");
+    let mut correct = 0;
     for target in targets.into_iter() {
 	let start = Instant::now();
 	if check_column(&chains, target.clone()) == false {
 	    // println!("{}", check_rows(&chains, target.clone()));
 	    if !check_rows(&chains, target.clone()) {
-		print!("[ERROR] Not in table");
+		print!("| \x1b[31m✗\x1b[0m Not in table");
+	    } else {
+		correct += 1;
 	    }
 	}
 	println!(" in {:?}", start.elapsed());
     }
+    println!("└ Cracked {}/{} passwords!", correct, length);
     // for i in 0..NUM_CHAINS {
     // 	// Borrow checkers are fun.
 	// println!("{} {}",
