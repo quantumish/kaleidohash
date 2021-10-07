@@ -1,10 +1,11 @@
 use rand::{thread_rng, Rng};
 use rand::distributions::Alphanumeric;
 use sha1::{Sha1, Digest};
+use std::time::Instant;
 
-const CHAIN_LEN: usize = 2;
-const NUM_CHAINS: usize = 4;
-
+const CHAIN_LEN: usize = 20000;
+const NUM_CHAINS: usize = 4000;
+const PASS_SIZE: usize = 3;
 
 // fn str_to_int(s: Vec<u8>) -> u128 {
 //     let mut num: u128 = 0;
@@ -52,9 +53,9 @@ fn sha1_hash (s: Vec<u8>) -> Vec<u8> {
 
 impl RainbowChain {
     fn new() -> RainbowChain {
-	// let rng = thread_rng();
-	// let original: Vec<u8> = rng.sample_iter(&Alphanumeric).take(5).collect();
-	let original: Vec<u8> = b"paSsw".to_vec();
+	let rng = thread_rng();
+	let original: Vec<u8> = rng.sample_iter(&Alphanumeric).take(PASS_SIZE).collect();
+	// let original: Vec<u8> = b"paSsw".to_vec();
 	let mut string: Vec<u8> = original.clone();
 	// print!("{}", String::from_utf8(string.clone()).unwrap());
 	let mut hash: Vec<u8> = sha1_hash(string);
@@ -76,7 +77,7 @@ impl RainbowChain {
 fn reduce(hash: Vec<u8>, i: usize) -> Vec<u8>
 {
     let mut out: Vec<u8> = Vec::new();
-    for j in 0..5 {
+    for j in 0..PASS_SIZE {
 	out.push(((hash[j] as usize + i) % 62) as u8);
     }
     alpha_to_ascii(out)    
@@ -109,12 +110,13 @@ fn check_rows(chains: &Vec<RainbowChain>, target: Vec<u8>) -> bool {
 		let mut string2 = chains.get(j).unwrap().initial.clone();
 		let mut hash2: Vec<u8> = sha1_hash(string2.clone());
 		for k in 0..CHAIN_LEN/2 {
-		    string2 = reduce(hash2.clone(), k);
-		    hash2 = sha1_hash(string2.clone());
 		    if hash2 == target.clone() {
-			println!("[CRACKED] {}", String::from_utf8(string2).unwrap());
+			print!("[CRACKED] {}", String::from_utf8(string2).unwrap());
 			return true;
 		    }
+		    string2 = reduce(hash2.clone(), k);
+		    hash2 = sha1_hash(string2.clone());
+		    // println!("{} {}\n", String::from_utf8(string2.clone()).unwrap(), hex::encode(hash2.clone()));		    
 		}		
 	    }
 	}
@@ -130,14 +132,20 @@ fn main() {
 	chains.push(RainbowChain::new());
 	bar.inc(1);
     }
-    println!("Done!");
-    let target: Vec<u8> = vec![78,245,122,10,177,105,93,110,48,234,242,160,42,74,245,16,101,182,141,160];
-    if check_column(&chains, target.clone()) == false {
-	println!("Checked last column!");
-	println!("{}", check_rows(&chains, target.clone()));
-	if check_rows(&chains, target.clone()) == false {
-	    println!("[ERROR] Not in table!");
+    let targets: Vec<Vec<u8>> = vec![
+	vec![169,153,62,54,71,6,129,106,186,62,37,113,120,80,194,108,156,208,216,157],
+	vec![27,163,110,98,0,100,14,221,6,101,69,34,250,17,55,200,199,43,79,176],
+	vec![105,191,28,123,95,58,228,150,169,106,23,124,164,49,197,198,146,57,250,140],
+    ];
+    for target in targets.into_iter() {
+	let start = Instant::now();
+	if check_column(&chains, target.clone()) == false {
+	    // println!("{}", check_rows(&chains, target.clone()));
+	    if !check_rows(&chains, target.clone()) {
+		print!("[ERROR] Not in table");
+	    }
 	}
+	println!(" in {:?}", start.elapsed());
     }
     // for i in 0..NUM_CHAINS {
     // 	// Borrow checkers are fun.
