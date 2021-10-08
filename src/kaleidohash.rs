@@ -1,13 +1,13 @@
 use rand::{thread_rng, Rng};
 use rand::distributions::Alphanumeric;
-use sha1::{Sha1, Digest};
 use std::time::Instant;
 use rayon::prelude::*;
 use human_format::{Scales, Formatter};
 use std::collections::HashSet;
+use openssl::sha::sha1;
 
-const CHAIN_LEN: usize = 2000;
-const NUM_CHAINS: usize = 200000;
+const CHAIN_LEN: usize = 4000;
+const NUM_CHAINS: usize = 2000000;
 const PASS_SIZE: usize = 6;
 const HASH_SIZE: usize = 20;
 
@@ -45,24 +45,17 @@ fn alpha_to_ascii(s: Vec<u8>) -> Vec<u8> {
 struct RainbowChain {
     // initial: u128,
     initial: Vec<u8>,
-    last: Vec<u8>,
+    last: [u8; HASH_SIZE],
 }
 
-// Screw it, just reinitialize each time.
-fn sha1_hash (s: Vec<u8>) -> Vec<u8> {
-    let mut hasher = Sha1::new();
-    hasher.update(s);
-    hasher.finalize().to_vec()
-}
-
-impl RainbowChain {
-    fn forward(original: Vec<u8>) -> RainbowChain {
+impl RainbowChain {    
+    fn forward(original: Vec<u8>) -> RainbowChain {	
 	let mut string: Vec<u8> = original.clone();
-	let mut hash: Vec<u8> = sha1_hash(string);
+	let mut hash: [u8; HASH_SIZE] = sha1(&string);
 	for i in 0..CHAIN_LEN/2 {
 	    string = reduce(hash, i);
 	    // println!("{} {}", String::from_utf8(string.clone()).unwrap(), i);
-	    hash = sha1_hash(string);
+	    hash = sha1(&string);
 	}
 	RainbowChain {
 	    initial: original,
@@ -72,7 +65,7 @@ impl RainbowChain {
 }
 
 // TODO Sketchy implementation
-fn reduce(hash: Vec<u8>, i: usize) -> Vec<u8>
+fn reduce(hash: [u8; HASH_SIZE], i: usize) -> Vec<u8>
 {
     let mut out: Vec<u8> = Vec::new();
     for j in 0..PASS_SIZE {
@@ -81,14 +74,14 @@ fn reduce(hash: Vec<u8>, i: usize) -> Vec<u8>
     alpha_to_ascii(out)    
 }
 
-fn check_column(chains: &Vec<RainbowChain>, target: Vec<u8>) -> bool {
+fn check_column(chains: &Vec<RainbowChain>, target: [u8; HASH_SIZE]) -> bool {
     for i in 0..NUM_CHAINS {
 	if target == chains.get(i).unwrap().last {
 	    let mut string: Vec<u8> = chains.get(i).unwrap().initial.clone();
-	    let mut hash: Vec<u8> = sha1_hash(string.clone());
+	    let mut hash: [u8; HASH_SIZE] = sha1(&string.clone());
 	    for i in 0..CHAIN_LEN/2 {
 		string = reduce(hash, i);
-		hash = sha1_hash(string.clone());
+		hash = sha1(&string.clone());
 	    }
 	    println!("[CRACKED (END)] {}", String::from_utf8(string).unwrap());
 	    return true;
@@ -104,30 +97,30 @@ fn initialize_chains(chains: &mut Vec<RainbowChain>) {
 	    let rng = thread_rng();
 	    let plaintext: Vec<u8> = rng.sample_iter(&Alphanumeric).take(PASS_SIZE).collect();
 	    if initials.insert(plaintext.clone()) {
-		chains.push(RainbowChain {initial: plaintext, last: Vec::new()});
+		chains.push(RainbowChain {initial: plaintext, last: [0; HASH_SIZE]});
 		break;
 	    }
 	}
     }
 }
 
-fn check_rows(chains: &Vec<RainbowChain>, target: Vec<u8>) -> bool {
-    let mut hash: Vec<u8> = target.clone();
+fn check_rows(chains: &Vec<RainbowChain>, target: [u8; HASH_SIZE]) -> bool {
+    let mut hash: [u8; HASH_SIZE] = target.clone();
     let mut string: Vec<u8>;
     for i in 0..CHAIN_LEN/2 {
 	string = reduce(hash, i);
-	hash = sha1_hash(string.clone());
+	hash = sha1(&string.clone());
 	for j in 0..NUM_CHAINS {
 	    if hash == chains.get(j).unwrap().last {
 		let mut string2 = chains.get(j).unwrap().initial.clone();
-		let mut hash2: Vec<u8> = sha1_hash(string2.clone());
+		let mut hash2: [u8; HASH_SIZE] = sha1(&string2.clone());
 		for k in 0..CHAIN_LEN/2 {
 		    if hash2 == target.clone() {
 			print!("| \x1b[32m✓\x1b[0m {}", String::from_utf8(string2).unwrap());
 			return true;
 		    }
 		    string2 = reduce(hash2.clone(), k);
-		    hash2 = sha1_hash(string2.clone());
+		    hash2 = sha1(&string2.clone());
 		}
 	    }
 	}
@@ -159,7 +152,7 @@ fn main() {
 	     100f64 - ((bytes as f64)/((((CHAIN_LEN/2)*NUM_CHAINS)*(PASS_SIZE+HASH_SIZE)) as f64)*100f64),
 	     gen.elapsed());
 
-    let mut set: HashSet<Vec<u8>> = HashSet::new();
+    let mut set: HashSet<[u8; HASH_SIZE]> = HashSet::new();
     let mut duplicates = 0;
     for i in 0..NUM_CHAINS {
 	if set.insert(chains.get(i).unwrap().last.clone()) == false {
@@ -169,8 +162,8 @@ fn main() {
     println!("{} duplicate end values out of {} rows.", duplicates, NUM_CHAINS);
     
     
-    let targets: Vec<Vec<u8>> = vec![
-	vec![48,39,76,71,144,59,209,186,199,99,59,191,9,116,49,73,235,171,128,95]
+    let targets: Vec<[u8;HASH_SIZE]> = vec![
+	[48,39,76,71,144,59,209,186,199,99,59,191,9,116,49,73,235,171,128,95]
     ];
     println!("\n🔨 Cracking passwords...");
     let length = targets.len();

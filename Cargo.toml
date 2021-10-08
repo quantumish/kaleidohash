@@ -17,6 +17,7 @@ hex = "0.4.3"
 human_format = "1.0.3"
 indicatif = "0.16.2"
 modulo = "0.1.2"
+openssl = "0.10.36"
 rand = "0.8.4"
 rayon = "1.5.1"
 serde = { version = "1.0", features = ["derive"] }
