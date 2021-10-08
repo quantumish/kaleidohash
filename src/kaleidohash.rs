@@ -4,11 +4,12 @@ use sha1::{Sha1, Digest};
 use std::time::Instant;
 use rayon::prelude::*;
 use human_format::{Scales, Formatter};
+use std::collections::HashSet;
 
 const CHAIN_LEN: usize = 2000;
-const NUM_CHAINS: usize = 20000;
-const PASS_SIZE: usize = 3;
-const HASH_SIZE: usize = 20; 
+const NUM_CHAINS: usize = 200000;
+const PASS_SIZE: usize = 6;
+const HASH_SIZE: usize = 20;
 
 // fn str_to_int(s: Vec<u8>) -> u128 {
 //     let mut num: u128 = 0;
@@ -75,7 +76,7 @@ fn reduce(hash: Vec<u8>, i: usize) -> Vec<u8>
 {
     let mut out: Vec<u8> = Vec::new();
     for j in 0..PASS_SIZE {
-	out.push(((hash[j] as usize + i) % 62) as u8);
+	out.push(((hash[j] as usize + i + j*2) % 62) as u8);
     }
     alpha_to_ascii(out)    
 }
@@ -96,8 +97,7 @@ fn check_column(chains: &Vec<RainbowChain>, target: Vec<u8>) -> bool {
     return false;
 }
 
-fn initialize_chains(chains: &mut Vec<RainbowChain>) {
-    use std::collections::HashSet;
+fn initialize_chains(chains: &mut Vec<RainbowChain>) {    
     let mut initials: HashSet<Vec<u8>> = HashSet::new();    
     for _i in 0..NUM_CHAINS {
 	loop {
@@ -135,7 +135,7 @@ fn check_rows(chains: &Vec<RainbowChain>, target: Vec<u8>) -> bool {
     false
 }
 
-fn main() {
+fn main() {    
     println!("🌈 Generating {}x{} rainbow table...", CHAIN_LEN, NUM_CHAINS);
     let mut chains: Vec<RainbowChain> = Vec::new();
     let init = Instant::now();
@@ -143,7 +143,7 @@ fn main() {
     println!("| Initialized in {:?}.", init.elapsed());
     let gen = Instant::now();
     chains = chains.par_iter().map(|i| RainbowChain::forward(i.initial.clone())).collect();
-    let bytes = (HASH_SIZE+PASS_SIZE)*NUM_CHAINS;
+    let bytes = (HASH_SIZE+PASS_SIZE)*NUM_CHAINS;   
     let mut scales = Scales::new();
     scales
         .with_base(1024)
@@ -158,15 +158,22 @@ fn main() {
 	     Formatter::new().format(((CHAIN_LEN/2)*NUM_CHAINS) as f64),
 	     100f64 - ((bytes as f64)/((((CHAIN_LEN/2)*NUM_CHAINS)*(PASS_SIZE+HASH_SIZE)) as f64)*100f64),
 	     gen.elapsed());
+
+    let mut set: HashSet<Vec<u8>> = HashSet::new();
+    let mut duplicates = 0;
+    for i in 0..NUM_CHAINS {
+	if set.insert(chains.get(i).unwrap().last.clone()) == false {
+	    duplicates+=1
+	}
+    }
+    println!("{} duplicate end values out of {} rows.", duplicates, NUM_CHAINS);
+    
+    
     let targets: Vec<Vec<u8>> = vec![
-	vec![169,153,62,54,71,6,129,106,186,62,37,113,120,80,194,108,156,208,216,157],
-	vec![27,163,110,98,0,100,14,221,6,101,69,34,250,17,55,200,199,43,79,176],
-	vec![105,191,28,123,95,58,228,150,169,106,23,124,164,49,197,198,146,57,250,140],
-	// vec![157,78,30,35,189,91,114,112,70,169,227,180,183,219,87,189,141,110,230,132]
-	// vec![48,39,76,71,144,59,209,186,199,99,59,191,9,116,49,73,235,171,128,95]
+	vec![48,39,76,71,144,59,209,186,199,99,59,191,9,116,49,73,235,171,128,95]
     ];
-    let length = targets.len();
     println!("\n🔨 Cracking passwords...");
+    let length = targets.len();
     let mut correct = 0;
     for target in targets.into_iter() {
 	let start = Instant::now();
