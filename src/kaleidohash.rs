@@ -52,7 +52,7 @@ fn reduce(hash: Hash, i: usize, pass_size: usize) -> Vec<u8>
     for j in 0..pass_size {
 	out.push(((hash[j] as usize + i + j*2) % 62) as u8);
     }
-    alpha_to_ascii(out)    
+    alpha_to_ascii(out)
 }
 
 struct RainbowMetadata {
@@ -84,17 +84,20 @@ impl RainbowTable {
 		    .sample_iter(&Alphanumeric)
 		    .take(r.info.pass_size)
 		    .collect();
-		if initials.insert(plaintext.clone()) {
+		if initials.insert(plaintext.clone()) {		    
 		    r.chains.push(RainbowChain {initial: plaintext, last: [0; HASH_SIZE]});
 		    break;
 		}
 	    }
 	}
-	r.chains.par_iter()
+	r.chains = r.chains.par_iter()
 	    .map(|i| RainbowChain::forward(i.initial.clone(),
 					   r.info.chain_len,
 					   r.info.pass_size))
 	    .collect::<Vec<RainbowChain>>();
+	for i in 0..5 {
+	    println!("{}", hex::encode(r.chains.get(i).unwrap().last)) ;
+	}
 	r
     }
 
@@ -142,6 +145,16 @@ impl RainbowTable {
 	    return self.check_rows(target);	    
 	}
     }
+    fn duplicates(&self) -> u64 {
+	let mut set: HashSet<Hash> = HashSet::new();
+	let mut duplicates = 0;
+	for i in 0..self.info.num_chains {
+	    if set.insert(self.chains.get(i).unwrap().last) == false {
+		duplicates+=1
+	    }
+	}
+	return duplicates;
+    }
 }
 
 impl fmt::Display for RainbowTable {
@@ -159,10 +172,16 @@ impl fmt::Display for RainbowTable {
 }
 
 fn main() {
-    let r: RainbowTable = RainbowTable::new(200, 400, 1);
-    // assert_eq!(sha1(b"abc"), [169,153,62,54,71,6,129,106,186,62,37,113,120,80,194,108,156,208,216,157]);
-    // println!("{}", r);
-    println!("{:#?}", r.lookup(sha1(b"a")));
+    let r: RainbowTable = RainbowTable::new(2000, 80000, 3);
+    assert_eq!(sha1(b"abc"), [169,153,62,54,71,6,129,106,186,62,37,113,120,80,194,108,156,208,216,157]);
+    println!("{}", r);
+    println!("{}", r.duplicates());
+    println!("{:#?}", r.lookup(sha1(b"abc")));
+    println!("{:#?}", r.lookup(sha1(b"aaa")));    
+    println!("{:#?}", r.lookup(sha1(b"zZz")));
+    println!("{:#?}", r.lookup(sha1(b"a2c")));
+    println!("{:#?}", r.lookup(sha1(b"baa")));    
+    println!("{:#?}", r.lookup(sha1(b"zoz")));
 }
 
 #[cfg(test)]
@@ -170,10 +189,10 @@ mod tests {
     use super::*;
     #[test]
     fn test_small() {
-	let r: RainbowTable = RainbowTable::new(2000, 40000, 1);
+	let r: RainbowTable = RainbowTable::new(2000, 40000, 3);
 	// assert_eq!(sha1(b"abc"), [169,153,62,54,71,6,129,106,186,62,37,113,120,80,194,108,156,208,216,157]);
 	println!("{}", r);
-	assert_eq!(r.lookup(sha1(b"a")), Some(String::from("a")));
+	assert_eq!(r.lookup(sha1(b"abc")), Some(String::from("abc")));
     }
 
     
