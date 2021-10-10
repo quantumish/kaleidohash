@@ -13,9 +13,10 @@ use indicatif::ProgressBar;
 
 const HASH_SIZE: usize = 20;
 type Hash = [u8; HASH_SIZE];
+const PASS_SIZE: usize = 6; // TODO REMOVE
 
-fn alpha_to_ascii(s: Vec<u8>) -> Vec<u8> {
-    let mut out: Vec<u8> = Vec::new();
+fn alpha_to_ascii(s: Hash) -> Vec<u8> {
+    let mut out: Vec<u8> = Vec::with_capacity(PASS_SIZE);
     for i in 0..s.len() {
 	if s[i] <= 9 {
 	    out.push(s[i]+48)
@@ -52,7 +53,7 @@ struct RainbowChain {
 }
 
 impl RainbowChain {    
-    fn forward(original: Vec<u8>, len: usize, pass_size: usize, progress: &ProgressBar, n: &AtomicU64) -> RainbowChain {	
+    fn forward(original: Vec<u8>, len: usize, progress: &ProgressBar, n: &AtomicU64) -> RainbowChain {	
 	let mut string: Vec<u8> = original.clone();
 	let mut hash: Hash = sha1(&string);
 	for i in 0..len/2 {
@@ -71,7 +72,7 @@ impl RainbowChain {
 // TODO Sketchy implementation
 fn reduce(hash: &Hash, deriv: usize) -> Vec<u8>
 {
-    alpha_to_ascii(hash.map(|i| (((i as u32 + deriv as u32) % (62))) as u8).to_vec())
+    alpha_to_ascii(hash.map(|i| (((i as u32 + deriv as u32) % (62))) as u8))
     // let mut out: Vec<u8> = Vec::new();
     // for j in 0..pass_size {
     // 	out.push(((hash[j] as usize + i*j) % 62) as u8);
@@ -124,7 +125,6 @@ impl RainbowTable {
 	r.chains = r.chains.par_iter()
 	    .map(|i| RainbowChain::forward(i.initial.clone(),
 					   r.info.chain_len,
-					   r.info.pass_size,
 					   &progress,
 					   &n))
 	    .collect::<Vec<RainbowChain>>();
@@ -208,10 +208,16 @@ impl fmt::Display for RainbowTable {
 }
 
 fn main() {
-    let r: RainbowTable = RainbowTable::new(2000, 40000, 3);
-    println!("{}", r);
+    let s = Instant::now();
+    let r: RainbowTable = RainbowTable::new(2000, 40000, 6);
+    println!("{} in {:?}", r, s.elapsed());
     println!("{} duplicates out of {} rows.", r.duplicates(), r.info.num_chains);
-    let targets: Vec<Hash> = vec![sha1(b"abc"), sha1(b"123"), sha1(b"whe"), sha1(b"p2S"), sha1(b"ZZc"), sha1(b"196")];
+    let targets: Vec<Hash> = vec![sha1(b"passwd"),
+				  sha1(b"t3stin"),
+				  sha1(b"p4sswd"),
+				  sha1(b"ABdw32"),
+				  sha1(b"ABc123"),
+				  sha1(b"fuTur3")];
     for target in targets.iter() {
 	let start = Instant::now();	
 	match r.lookup(target.clone()) {
