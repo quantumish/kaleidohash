@@ -6,6 +6,8 @@ use rayon::prelude::*;
 use human_format::{Scales, Formatter};
 use std::collections::HashSet;
 use openssl::sha::sha1;
+use std::sync::atomic::{AtomicU64, Ordering};
+use indicatif::ProgressBar;
 
 const HASH_SIZE: usize = 20;
 type Hash = [u8; HASH_SIZE];
@@ -31,13 +33,15 @@ struct RainbowChain {
 }
 
 impl RainbowChain {    
-    fn forward(original: Vec<u8>, len: usize, pass_size: usize) -> RainbowChain {	
+    fn forward(original: Vec<u8>, len: usize, pass_size: usize, progress: &ProgressBar, n: &AtomicU64) -> RainbowChain {	
 	let mut string: Vec<u8> = original.clone();
 	let mut hash: Hash = sha1(&string);
 	for i in 0..len/2 {
-	    string = reduce(hash, i, pass_size);
+	    string = reduce(&hash, i);
 	    hash = sha1(&string);
 	}
+	let m = n.fetch_add(1, Ordering::Relaxed);	
+        progress.set_position(m);
 	RainbowChain {
 	    initial: original,
 	    last: hash,
@@ -46,13 +50,14 @@ impl RainbowChain {
 }
 
 // TODO Sketchy implementation
-fn reduce(hash: Hash, i: usize, pass_size: usize) -> Vec<u8>
+fn reduce(hash: &Hash, deriv: usize) -> Vec<u8>
 {
-    let mut out: Vec<u8> = Vec::new();
-    for j in 0..pass_size {
-	out.push(((hash[j] as usize + i + j*2) % 62) as u8);
-    }
-    alpha_to_ascii(out)
+    alpha_to_ascii(hash.map(|i| (((i as u32 + deriv as u32) % (62))) as u8).to_vec())
+    // let mut out: Vec<u8> = Vec::new();
+    // for j in 0..pass_size {
+    // 	out.push(((hash[j] as usize + i*j) % 62) as u8);
+    // }
+    // alpha_to_ascii(out)
 }
 
 struct RainbowMetadata {
@@ -90,25 +95,31 @@ impl RainbowTable {
 		}
 	    }
 	}
+
+	let progress = ProgressBar::new(num_chains as u64);
+        progress.enable_steady_tick(250);	
+        let n = AtomicU64::new(0);
+	
 	r.chains = r.chains.par_iter()
 	    .map(|i| RainbowChain::forward(i.initial.clone(),
 					   r.info.chain_len,
-					   r.info.pass_size))
+					   r.info.pass_size,
+					   &progress,
+					   &n))
 	    .collect::<Vec<RainbowChain>>();
-	for i in 0..5 {
-	    println!("{}", hex::encode(r.chains.get(i).unwrap().last)) ;
-	}
+
+	progress.finish();
 	r
     }
 
     fn check_column(&self, target: Hash) -> Option<String> {
-	for i in 0..self.info.num_chains {
-	    if target == self.chains.get(i).unwrap().last {
-		let mut string: Vec<u8> = self.chains.get(i).unwrap().initial.clone();
+	for chain in &self.chains {
+	    if target == chain.last {
+		let mut string: Vec<u8> = chain.initial.clone();
 		let mut hash: Hash = sha1(&string);
 		for i in 0..self.info.chain_len/2 {
-		    string = reduce(hash, i, self.info.pass_size);
-		    hash = sha1(&string.clone());
+		    string = reduce(&hash, i);
+		    hash = sha1(&string);
 		}
 		return Some(String::from_utf8(string).unwrap());
 	    }
@@ -117,27 +128,28 @@ impl RainbowTable {
     }     
 
     fn check_rows(&self, target: Hash) -> Option<String> {
-	let mut hash: Hash = target.clone();
+	let mut hash: Hash = target;
 	let mut string: Vec<u8>;
 	for i in 0..self.info.chain_len/2 {
-	    string = reduce(hash, i, self.info.pass_size);
-	    hash = sha1(&string.clone());	    
-	    for j in 0..self.info.num_chains {
-		if hash == self.chains.get(j).unwrap().last {
-		    let mut string2 = self.chains.get(j).unwrap().initial.clone();
-		    let mut hash2: Hash = sha1(&string2.clone());
+	    string = reduce(&hash, i);
+	    hash = sha1(&string);	    
+	    for chain in &self.chains {
+		if hash == chain.last {
+		    let mut string2 = chain.initial.clone();
+		    let mut hash2: Hash = sha1(&string2);
 		    for k in 0..self.info.chain_len/2 {
-			if hash2 == target.clone() {
+			if hash2 == target {
 			    return Some(String::from_utf8(string2).unwrap());
 			}
-			string2 = reduce(hash2.clone(), k, self.info.pass_size);
-			hash2 = sha1(&string2.clone());
+			string2 = reduce(&hash2, k);
+			hash2 = sha1(&string2);
 		    }
 		}
 	    }
 	}
 	return None;
     }
+    
     fn lookup(&self, target: Hash) -> Option<String> {
 	if let Some(string) = self.check_column(target) {
 	    return Some(string);
@@ -145,11 +157,13 @@ impl RainbowTable {
 	    return self.check_rows(target);	    
 	}
     }
+    
     fn duplicates(&self) -> u64 {
 	let mut set: HashSet<Hash> = HashSet::new();
 	let mut duplicates = 0;
-	for i in 0..self.info.num_chains {
-	    if set.insert(self.chains.get(i).unwrap().last) == false {
+	for chain in &self.chains {
+	    // println!("{}", hex::encode(chain.last));
+	    if set.insert(chain.last) == false {
 		duplicates+=1
 	    }
 	}
@@ -172,16 +186,16 @@ impl fmt::Display for RainbowTable {
 }
 
 fn main() {
-    let r: RainbowTable = RainbowTable::new(2000, 80000, 3);
+    let r: RainbowTable = RainbowTable::new(4000, 2000000, 4);
     assert_eq!(sha1(b"abc"), [169,153,62,54,71,6,129,106,186,62,37,113,120,80,194,108,156,208,216,157]);
     println!("{}", r);
-    println!("{}", r.duplicates());
-    println!("{:#?}", r.lookup(sha1(b"abc")));
-    println!("{:#?}", r.lookup(sha1(b"aaa")));    
-    println!("{:#?}", r.lookup(sha1(b"zZz")));
-    println!("{:#?}", r.lookup(sha1(b"a2c")));
-    println!("{:#?}", r.lookup(sha1(b"baa")));    
-    println!("{:#?}", r.lookup(sha1(b"zoz")));
+    println!("{} duplicates out of {} rows.", r.duplicates(), r.info.num_chains);
+    println!("{:#?}", r.lookup(sha1(b"bcdc")));
+    println!("{:#?}", r.lookup(sha1(b"adsa")));    
+    println!("{:#?}", r.lookup(sha1(b"Zdaz")));
+    println!("{:#?}", r.lookup(sha1(b"adzc")));
+    println!("{:#?}", r.lookup(sha1(b"bdca")));    
+    println!("{:#?}", r.lookup(sha1(b"zdcz")));
 }
 
 #[cfg(test)]
