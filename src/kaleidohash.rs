@@ -157,8 +157,7 @@ impl RainbowTable {
 	for i in 0..self.info.chain_len/2 {
 	    string = reduce(&hash, i);
 	    hash = sha1(&string);
-	    let a: Result<usize, usize> = self.chains.binary_search_by(|i| target.cmp(&i.last));
-	    println!("{:#?}", a);
+	    let a: Result<usize, usize> = self.chains.binary_search_by(|i| hash.cmp(&i.last));
 	    if let Ok(c) = a {
 		let mut string2 = self.chains.get(c).unwrap().initial.clone();
 		let mut hash2: Hash = sha1(&string2);
@@ -209,17 +208,19 @@ impl fmt::Display for RainbowTable {
 }
 
 fn main() {
-    let r: RainbowTable = RainbowTable::new(5, 40000, 3);
+    let r: RainbowTable = RainbowTable::new(2000, 40000, 3);
     println!("{}", r);
-    println!("{} duplicates out of {} rows.", r.duplicates(), r.info.num_chains);    
-    println!("{:#?}", r.lookup(sha1(&r.chains.get(0).unwrap().initial)));
-    println!("{:#?}", r.lookup(sha1(b"abc")));
-    println!("{:#?}", r.lookup(sha1(b"123")));
-    println!("{:#?}", r.lookup(sha1(b"whe")));
-    println!("{:#?}", r.lookup(sha1(b"p2S")));
-    println!("{:#?}", r.lookup(sha1(b"ZZc")));    
-    println!("{:#?}", r.lookup(sha1(b"196")));
+    println!("{} duplicates out of {} rows.", r.duplicates(), r.info.num_chains);
+    let targets: Vec<Hash> = vec![sha1(b"abc"), sha1(b"123"), sha1(b"whe"), sha1(b"p2S"), sha1(b"ZZc"), sha1(b"196")];
+    for target in targets.iter() {
+	let start = Instant::now();	
+	match r.lookup(target.clone()) {
+	    Some(s) => println!("{} in {:?}", s, start.elapsed()),
+	    None => println!("Failed in {:?}", start.elapsed()),	    
+	}
+    }
 }
+
 #[cfg(test)]
 mod tests {
     use super::*;
