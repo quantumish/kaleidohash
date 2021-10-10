@@ -1,4 +1,5 @@
 
+
 use rand::{thread_rng, Rng};
 use rand::distributions::Alphanumeric;
 use std::time::Instant;
@@ -15,19 +16,19 @@ const HASH_SIZE: usize = 20;
 type Hash = [u8; HASH_SIZE];
 const PASS_SIZE: usize = 6; // TODO REMOVE
 
-fn alpha_to_ascii(s: Hash) -> Vec<u8> {
-    let mut out: Vec<u8> = Vec::with_capacity(PASS_SIZE);
-    for i in 0..s.len() {
-	if s[i] <= 9 {
-	    out.push(s[i]+48)
-	} else if s[i] <= 35 {
-	    out.push(s[i]-10+65)
-	} else {
-	    out.push(s[i]-36+97)
-	}
-    }
-    out
-}
+// fn alpha_to_ascii(s: Hash) -> Vec<u8> {
+//     let mut out: Vec<u8> = Vec::with_capacity(PASS_SIZE);
+//     for i in 0..s.len() {
+// 	if s[i] <= 9 {
+// 	    out.push(s[i]+48)
+// 	} else if s[i] <= 35 {
+// 	    out.push(s[i]-10+65)
+// 	} else {
+// 	    out.push(s[i]-36+97)
+// 	}
+//     }
+//     out
+// }
 
 fn alpha_to_u128(s: Vec<u8>) -> u128 {
     let mut out: u128 = 0;
@@ -58,6 +59,7 @@ impl RainbowChain {
 	let mut hash: Hash = sha1(&string);
 	for i in 0..len/2 {
 	    string = reduce(&hash, i);
+	    // println!("{}", String::from_utf8(string.clone()).unwrap());
 	    hash = sha1(&string);
 	}
 	let m = n.fetch_add(1, Ordering::Relaxed);	
@@ -70,14 +72,15 @@ impl RainbowChain {
 }
 
 // TODO Sketchy implementation
-fn reduce(hash: &Hash, deriv: usize) -> Vec<u8>
-{
-    alpha_to_ascii(hash.map(|i| (((i as u32 + deriv as u32) % (62))) as u8))
-    // let mut out: Vec<u8> = Vec::new();
-    // for j in 0..pass_size {
-    // 	out.push(((hash[j] as usize + i*j) % 62) as u8);
-    // }
-    // alpha_to_ascii(out)
+fn reduce(hash: &Hash, deriv: usize) -> Vec<u8> {
+    hash.map(|i| (((i as u32 + deriv as u32) % (75)) + 48) as u8)[..PASS_SIZE].to_vec()
+    /*
+    let mut out: Vec<u8> = Vec::new();
+    for j in 0..pass_size {
+    	out.push(((hash[j] as usize + i*j) % 62) as u8);
+    }
+    alpha_to_ascii(out)
+    */
 }
 
 #[derive(Serialize, Deserialize)]
@@ -122,7 +125,7 @@ impl RainbowTable {
         progress.enable_steady_tick(250);	
         let n = AtomicU64::new(0);
 	
-	r.chains = r.chains.par_iter()
+	r.chains = r.chains.iter()
 	    .map(|i| RainbowChain::forward(i.initial.clone(),
 					   r.info.chain_len,
 					   &progress,
@@ -213,7 +216,7 @@ fn main() {
     println!("{} in {:?}", r, s.elapsed());
     println!("{} duplicates out of {} rows.", r.duplicates(), r.info.num_chains);
     let targets: Vec<Hash> = vec![sha1(b"passwd"),
-				  sha1(b"t3stin"),
+				  sha1(b"t3st/n"),
 				  sha1(b"p4sswd"),
 				  sha1(b"ABdw32"),
 				  sha1(b"ABc123"),
@@ -225,6 +228,7 @@ fn main() {
 	    None => println!("Failed in {:?}", start.elapsed()),	    
 	}
     }
+    println!("{:?}", r.lookup(sha1(&r.chains.get(0).unwrap().initial.clone())));
 }
 
 #[cfg(test)]
