@@ -1,3 +1,4 @@
+
 use rand::{thread_rng, Rng};
 use rand::distributions::Alphanumeric;
 use std::time::Instant;
@@ -7,6 +8,7 @@ use human_format::{Scales, Formatter};
 use std::collections::HashSet;
 use openssl::sha::sha1;
 use std::sync::atomic::{AtomicU64, Ordering};
+use serde::{Serialize, Deserialize};
 use indicatif::ProgressBar;
 
 const HASH_SIZE: usize = 20;
@@ -26,8 +28,25 @@ fn alpha_to_ascii(s: Vec<u8>) -> Vec<u8> {
     out
 }
 
+fn alpha_to_u128(s: Vec<u8>) -> u128 {
+    let mut out: u128 = 0;
+    for i in 0..s.len() {
+	if s[i] <= 48+9 && s[i] >= 48 {
+	    println!("{} {}", s[i], s[i]-48);
+	    out += (s[i]-48) as u128 * 62u128.pow(i as u32);
+	} else if s[i] <= 65+26 && s[i] >= 65 {
+	    println!("{} {}", s[i], s[i]-65+10);
+	    out += (s[i]-65+10) as u128 * 62u128.pow(i as u32);
+	} else if s[i] <= 97+26 && s[i] >= 97 {
+	    println!("{} {}", s[i], s[i]-97+36);
+	    out += (s[i]-97+36) as u128 * 62u128.pow(i as u32);
+	}
+    }
+    out
+}
+
+#[derive(Serialize, Deserialize)]
 struct RainbowChain {
-    // initial: u128,
     initial: Vec<u8>,
     last: Hash,
 }
@@ -60,12 +79,14 @@ fn reduce(hash: &Hash, deriv: usize) -> Vec<u8>
     // alpha_to_ascii(out)
 }
 
+#[derive(Serialize, Deserialize)]
 struct RainbowMetadata {
     chain_len: usize,
     num_chains: usize,
     pass_size: usize,
 }
 
+#[derive(Serialize, Deserialize)]
 struct RainbowTable {
     info: RainbowMetadata,
     chains: Vec<RainbowChain>,    
@@ -109,20 +130,23 @@ impl RainbowTable {
 	    .collect::<Vec<RainbowChain>>();
 
 	progress.finish();
+	// println!("{:#?}", r);
+	r.chains.sort_by(|a,b| b.last.cmp(&a.last));
+	// println!("{:#?}", r);
 	r
     }
 
     fn check_column(&self, target: Hash) -> Option<String> {
-	for chain in &self.chains {
-	    if target == chain.last {
-		let mut string: Vec<u8> = chain.initial.clone();
-		let mut hash: Hash = sha1(&string);
-		for i in 0..self.info.chain_len/2 {
-		    string = reduce(&hash, i);
-		    hash = sha1(&string);
-		}
-		return Some(String::from_utf8(string).unwrap());
+	let a: Result<usize, usize> = self.chains.binary_search_by(|i| target.cmp(&i.last));
+	// println!("{:#?}", a);
+	if let Ok(c) = a {	    
+	    let mut string: Vec<u8> = self.chains.get(c).unwrap().initial.clone();
+	    let mut hash: Hash = sha1(&string);
+	    for i in 0..self.info.chain_len/2 {
+		string = reduce(&hash, i);
+		hash = sha1(&string);
 	    }
+	    return Some(String::from_utf8(string).unwrap());
 	}
 	return None;
     }     
@@ -132,18 +156,18 @@ impl RainbowTable {
 	let mut string: Vec<u8>;
 	for i in 0..self.info.chain_len/2 {
 	    string = reduce(&hash, i);
-	    hash = sha1(&string);	    
-	    for chain in &self.chains {
-		if hash == chain.last {
-		    let mut string2 = chain.initial.clone();
-		    let mut hash2: Hash = sha1(&string2);
-		    for k in 0..self.info.chain_len/2 {
-			if hash2 == target {
-			    return Some(String::from_utf8(string2).unwrap());
-			}
-			string2 = reduce(&hash2, k);
-			hash2 = sha1(&string2);
+	    hash = sha1(&string);
+	    let a: Result<usize, usize> = self.chains.binary_search_by(|i| target.cmp(&i.last));
+	    println!("{:#?}", a);
+	    if let Ok(c) = a {
+		let mut string2 = self.chains.get(c).unwrap().initial.clone();
+		let mut hash2: Hash = sha1(&string2);
+		for k in 0..self.info.chain_len/2 {
+		    if hash2 == target {
+			return Some(String::from_utf8(string2).unwrap());
 		    }
+		    string2 = reduce(&hash2, k);
+		    hash2 = sha1(&string2);
 		}
 	    }
 	}
@@ -162,7 +186,6 @@ impl RainbowTable {
 	let mut set: HashSet<Hash> = HashSet::new();
 	let mut duplicates = 0;
 	for chain in &self.chains {
-	    // println!("{}", hex::encode(chain.last));
 	    if set.insert(chain.last) == false {
 		duplicates+=1
 	    }
@@ -186,28 +209,24 @@ impl fmt::Display for RainbowTable {
 }
 
 fn main() {
-    let r: RainbowTable = RainbowTable::new(4000, 2000000, 4);
-    assert_eq!(sha1(b"abc"), [169,153,62,54,71,6,129,106,186,62,37,113,120,80,194,108,156,208,216,157]);
+    let r: RainbowTable = RainbowTable::new(5, 40000, 3);
     println!("{}", r);
-    println!("{} duplicates out of {} rows.", r.duplicates(), r.info.num_chains);
-    println!("{:#?}", r.lookup(sha1(b"bcdc")));
-    println!("{:#?}", r.lookup(sha1(b"adsa")));    
-    println!("{:#?}", r.lookup(sha1(b"Zdaz")));
-    println!("{:#?}", r.lookup(sha1(b"adzc")));
-    println!("{:#?}", r.lookup(sha1(b"bdca")));    
-    println!("{:#?}", r.lookup(sha1(b"zdcz")));
+    println!("{} duplicates out of {} rows.", r.duplicates(), r.info.num_chains);    
+    println!("{:#?}", r.lookup(sha1(&r.chains.get(0).unwrap().initial)));
+    println!("{:#?}", r.lookup(sha1(b"abc")));
+    println!("{:#?}", r.lookup(sha1(b"123")));
+    println!("{:#?}", r.lookup(sha1(b"whe")));
+    println!("{:#?}", r.lookup(sha1(b"p2S")));
+    println!("{:#?}", r.lookup(sha1(b"ZZc")));    
+    println!("{:#?}", r.lookup(sha1(b"196")));
 }
-
 #[cfg(test)]
 mod tests {
     use super::*;
     #[test]
-    fn test_small() {
-	let r: RainbowTable = RainbowTable::new(2000, 40000, 3);
-	// assert_eq!(sha1(b"abc"), [169,153,62,54,71,6,129,106,186,62,37,113,120,80,194,108,156,208,216,157]);
-	println!("{}", r);
-	assert_eq!(r.lookup(sha1(b"abc")), Some(String::from("abc")));
-    }
-
-    
+    fn u128_conv() {
+	assert_eq!(alpha_to_u128(b"000".to_vec()), 0);
+	assert_eq!(alpha_to_u128(b"aaa".to_vec()), 140652);
+	assert_eq!(alpha_to_u128(b"Ab1".to_vec()), 6148);
+    }    
 }
