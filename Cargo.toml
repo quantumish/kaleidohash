@@ -20,6 +20,8 @@ indicatif = "0.16.2"
 modulo = "0.1.2"
 openssl = "0.10.36"
 rand = "0.8.4"
+rand_pcg = "0.3.1"
+rand_seeder = "0.2.2"
 rayon = "1.5.1"
 serde = { version = "1.0.130", features = ["derive"] }
 serde_json = "1.0"
