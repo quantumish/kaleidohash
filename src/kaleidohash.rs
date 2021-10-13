@@ -1,3 +1,4 @@
+
 use rand::{thread_rng, Rng, seq::SliceRandom};
 use std::time::Instant;
 use std::fmt;
@@ -10,10 +11,11 @@ use indicatif::ProgressBar;
 
 const HASH_SIZE: usize = 20;
 type Hash = [u8; HASH_SIZE];
-const PASS_SIZE: usize = 4; // TODO REMOVE
 
+// Dummy struct to allow implementing rand::distributions::Distribution trait.
 struct Charset;
 
+// Implements std::rand::Distribution trait to allow Charset to be sampleable.
 impl rand::distributions::Distribution<u8> for Charset {
     fn sample<R: Rng + ?Sized>(&self, rng: &mut R) -> u8 {
 	*"0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz".to_string().into_bytes()
@@ -47,7 +49,7 @@ impl RainbowChain {
     fn forward(original: Vec<u8>, len: usize, progress: &ProgressBar, n: &AtomicU64) -> RainbowChain {	
 	let mut hash: Hash = sha1(&original);
 	for i in 0..len/2 {
-	    hash = sha1(&reduce(&hash, i));
+	    hash = sha1(&reduce(&hash, original.len()));
 	}
 	let m = n.fetch_add(1, Ordering::Relaxed);	
         progress.set_position(m);
@@ -62,17 +64,21 @@ impl RainbowChain {
 //
 // # Arguments 
 // * `hash` - A 20-byte SHA-1 hash.
-// * `_deriv` - Legacy compatibility argument.
+// * `pass_size` - Size of plaintext to generate.
 //
+// # Panics
+//
+// Will panic for any `pass_size` > `HASH_SIZE`.
+// 
 // # Examples
 // ```
 // use openssl::sha::sha1;
 // reduce(sha1(b"test"), 1);
 // ```
-fn reduce(hash: &Hash, _deriv: usize) -> Vec<u8> {
+fn reduce(hash: &Hash, pass_size: usize) -> Vec<u8> {
     let rng: rand_pcg::Pcg64 = rand_seeder::Seeder::from(hash).make_rng();
     rng.sample_iter(&Charset)
-	.take(PASS_SIZE)
+	.take(pass_size)
 	.collect()	
 }
 
@@ -107,13 +113,14 @@ impl RainbowTable {
     fn new(chain_len: usize, num_chains: usize, pass_size: usize) -> RainbowTable {
 	let mut r = RainbowTable {
 	    info: RainbowMetadata {
-		chain_len: chain_len,
-		num_chains: num_chains,
-		pass_size: pass_size,
+		chain_len,
+		num_chains,
+		pass_size,
 	    },
 	    chains: Vec::new(),
 	};
-	
+
+	// Keep trying to generate unique plaintext.
 	let mut initials: HashSet<Vec<u8>> = HashSet::new();    
 	for _i in 0..r.info.num_chains {
 	    loop {
@@ -121,6 +128,7 @@ impl RainbowTable {
 		    .sample_iter(&Charset)
 		    .take(r.info.pass_size)
 		    .collect();
+		// Only push if unique
 		if initials.insert(plaintext.clone()) {		    
 		    r.chains.push(RainbowChain {initial: plaintext, last: [0; HASH_SIZE]});
 		    break;
@@ -131,7 +139,8 @@ impl RainbowTable {
 	let progress = ProgressBar::new(num_chains as u64);
         progress.enable_steady_tick(250);	
         let n = AtomicU64::new(0);
-	
+
+	// Generate chains in parallel
 	r.chains = r.chains.par_iter()
 	    .map(|i| RainbowChain::forward(i.initial.clone(),
 					   r.info.chain_len,
@@ -140,6 +149,8 @@ impl RainbowTable {
 	    .collect::<Vec<RainbowChain>>();
 
 	progress.finish();
+
+	// Sort chains for very fast lookup
 	r.chains.sort_by(|a,b| b.last.cmp(&a.last));
 	r
     }
@@ -156,12 +167,14 @@ impl RainbowTable {
     // r.check_column(sha1(b"test"));
     // ```
     fn check_column(&self, target: Hash) -> Option<String> {
+	// Find which final hash it matches (or if it matches none at all)
 	let a = self.chains.binary_search_by(|i| target.cmp(&i.last));
-	if let Ok(c) = a {	    
+	if let Ok(c) = a {
+	    // Recompute chain to get preceding plaintext
 	    let mut string: Vec<u8> = self.chains.get(c).unwrap().initial.clone();
 	    let mut hash: Hash = sha1(&string);
 	    for i in 0..self.info.chain_len/2 {
-		string = reduce(&hash, i);
+		string = reduce(&hash, self.info.pass_size);
 		hash = sha1(&string);
 	    }
 	    return Some(String::from_utf8(string).unwrap());
@@ -183,18 +196,20 @@ impl RainbowTable {
     fn check_rows(&self, target: Hash) -> Option<String> {
 	let mut hash: Hash = target;
 	let mut string: Vec<u8>;
+	// Reduce, hash, repeat until hash matches an end hash in the table
 	for i in 0..self.info.chain_len/2 {
-	    string = reduce(&hash, i);
+	    string = reduce(&hash, self.info.pass_size);
 	    hash = sha1(&string);
 	    let a = self.chains.binary_search_by(|i| hash.cmp(&i.last));
 	    if let Ok(c) = a {
+		// Recompute matched chain
 		let mut string2 = self.chains.get(c).unwrap().initial.clone();
 		let mut hash2: Hash = sha1(&string2);
 		for k in 0..self.info.chain_len/2 {
 		    if hash2 == target {
 			return Some(String::from_utf8(string2).unwrap());
 		    }
-		    string2 = reduce(&hash2, k);
+		    string2 = reduce(&hash2, self.info.pass_size);
 		    hash2 = sha1(&string2);
 		}
 	    }
@@ -240,6 +255,9 @@ impl RainbowTable {
     }c
 }
 
+
+// Implements the fmt::Display trait to allow RainbowTable to be printable with `println!()`.
+// Prints a human readable summary of table info (rows, cols, size, hash count).
 impl fmt::Display for RainbowTable {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
 	let bytes = (HASH_SIZE+self.info.pass_size)*self.info.num_chains;
@@ -257,7 +275,7 @@ impl fmt::Display for RainbowTable {
 fn main() {
     println!("Generating rainbow table...");
     let s = Instant::now();
-    let r: RainbowTable = RainbowTable::new(2000, 120000, PASS_SIZE);
+    let r: RainbowTable = RainbowTable::new(2000, 120000, 4);
     println!("{} in {:?}", r, s.elapsed());
     println!("{} duplicates out of {} rows.", r.duplicates(), r.info.num_chains);
     let targets: Vec<Hash> = vec![sha1(b"psd\\"),
