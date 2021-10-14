@@ -48,7 +48,7 @@ impl RainbowChain {
     // ```
     fn forward(original: Vec<u8>, len: usize, progress: &ProgressBar, n: &AtomicU64) -> RainbowChain {	
 	let mut hash: Hash = sha1(&original);
-	for i in 0..len/2 {
+	for _i in 0..len/2 {
 	    hash = sha1(&reduce(&hash, original.len()));
 	}
 	let m = n.fetch_add(1, Ordering::Relaxed);	
@@ -111,7 +111,7 @@ impl RainbowTable {
     // let r = RainbowTable::new(100, 1000, 3);
     // ```
     fn new(chain_len: usize, num_chains: usize, pass_size: usize) -> RainbowTable {
-	let mut r = RainbowTable {
+	let mut table = RainbowTable {
 	    info: RainbowMetadata {
 		chain_len,
 		num_chains,
@@ -122,15 +122,15 @@ impl RainbowTable {
 
 	// Keep trying to generate unique plaintext.
 	let mut initials: HashSet<Vec<u8>> = HashSet::new();    
-	for _i in 0..r.info.num_chains {
+	for _i in 0..table.info.num_chains {
 	    loop {
-		let plaintext: Vec<u8> = thread_rng()
+		let plaintext: Vec<u8> = ChaCha20Rng::from_entropy()
 		    .sample_iter(&Charset)
-		    .take(r.info.pass_size)
+		    .take(table.info.pass_size)
 		    .collect();
 		// Only push if unique
 		if initials.insert(plaintext.clone()) {		    
-		    r.chains.push(RainbowChain {initial: plaintext, last: [0; HASH_SIZE]});
+		    table.chains.push(RainbowChain {initial: plaintext, last: [0; HASH_SIZE]});
 		    break;
 		}
 	    }
@@ -141,9 +141,9 @@ impl RainbowTable {
         let n = AtomicU64::new(0);
 
 	// Generate chains in parallel
-	r.chains = r.chains.par_iter()
+	table.chains = table.chains.par_iter()
 	    .map(|i| RainbowChain::forward(i.initial.clone(),
-					   r.info.chain_len,
+					   table.info.chain_len,
 					   &progress,
 					   &n))
 	    .collect::<Vec<RainbowChain>>();
@@ -151,8 +151,8 @@ impl RainbowTable {
 	progress.finish();
 
 	// Sort chains for very fast lookup
-	r.chains.sort_by(|a,b| b.last.cmp(&a.last));
-	r
+	table.chains.sort_by(|a,b| b.last.cmp(&a.last));
+	table
     }
 
     // Returns the plaintext (if it exists) of a hash by checking final column of
@@ -173,7 +173,7 @@ impl RainbowTable {
 	    // Recompute chain to get preceding plaintext
 	    let mut string: Vec<u8> = self.chains.get(c).unwrap().initial.clone();
 	    let mut hash: Hash = sha1(&string);
-	    for i in 0..self.info.chain_len/2 {
+	    for _i in 0..self.info.chain_len/2 {
 		string = reduce(&hash, self.info.pass_size);
 		hash = sha1(&string);
 	    }
@@ -197,7 +197,7 @@ impl RainbowTable {
 	let mut hash: Hash = target;
 	let mut string: Vec<u8>;
 	// Reduce, hash, repeat until hash matches an end hash in the table
-	for i in 0..self.info.chain_len/2 {
+	for _i in 0..self.info.chain_len/2 {
 	    string = reduce(&hash, self.info.pass_size);
 	    hash = sha1(&string);
 	    let a = self.chains.binary_search_by(|i| hash.cmp(&i.last));
@@ -205,7 +205,7 @@ impl RainbowTable {
 		// Recompute matched chain
 		let mut string2 = self.chains.get(c).unwrap().initial.clone();
 		let mut hash2: Hash = sha1(&string2);
-		for k in 0..self.info.chain_len/2 {
+		for _k in 0..self.info.chain_len/2 {
 		    if hash2 == target {
 			return Some(String::from_utf8(string2).unwrap());
 		    }
@@ -252,7 +252,7 @@ impl RainbowTable {
 	    }
 	}
 	return duplicates;
-    }c
+    }
 }
 
 
@@ -275,21 +275,19 @@ impl fmt::Display for RainbowTable {
 fn main() {
     println!("Generating rainbow table...");
     let s = Instant::now();
-    let r: RainbowTable = RainbowTable::new(2000, 120000, 4);
+    let r: RainbowTable = RainbowTable::new(400, 1500, 3);
     println!("{} in {:?}", r, s.elapsed());
     println!("{} duplicates out of {} rows.", r.duplicates(), r.info.num_chains);
-    let targets: Vec<Hash> = vec![sha1(b"psd\\"),
-				  sha1(b"tsd3"),
-				  sha1(b"psd4"),
-				  sha1(b"ABds"),
-				  sha1(b"ABdc"),
-				  sha1(b"fud4")];
-    for target in targets.iter() {
-	let start = Instant::now();	
+    for _i in 0..100 {
+	let target: Hash = sha1(&thread_rng()
+				.sample_iter(&Charset)
+				.take(r.info.pass_size)
+				.collect::<Vec<u8>>());
+	let start = Instant::now();
 	match r.lookup(target.clone()) {
-	    Some(s) => println!("{} in {:?}", s, start.elapsed()),
-	    None => println!("Failed in {:?}", start.elapsed()),	    
+	    Some(s) => println!("Cracked {} in {:?}", s, start.elapsed()),
+	    None => (),	    
 	}
     }
-    println!("{:?}", r.lookup(sha1(&r.chains.get(0).unwrap().initial.clone())));
+    println!("Sanity check: cracked first column's final hash to get {:?}", r.lookup(sha1(&r.chains.get(0).unwrap().initial.clone())));
 }
