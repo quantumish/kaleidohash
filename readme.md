@@ -7,9 +7,10 @@ Simple-ish implementation of a rainbow table designed to crack SHA-1 passwords. 
 
 ### Building
 <details>
-<summary>Install Rust and `cargo`</summary>
+  <summary>Install Rust and <code>cargo</code></summary>
 <br>
-From the [Rust installation guide](https://doc.rust-lang.org/cargo/getting-started/installation.html):
+From the <a href="https://doc.rust-lang.org/cargo/getting-started/installation.html">Rust installation guide</a>:
+  
 ```bash
 curl https://sh.rustup.rs -sSf | sh
 ```
