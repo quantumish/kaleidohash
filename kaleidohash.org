@@ -1,0 +1,338 @@
+
+#+TITLE: Rainbow Tables
+#+HTML_HEAD: <link rel="stylesheet" href="https://quantumish.github.io/admonition.css">
+#+HTML_HEAD: <link rel="stylesheet" href="https://quantumish.github.io/org.css">
+#+HTML_HEAD: <script src="https://kit.fontawesome.com/76c5ce8bda.js" crossorigin="anonymous">
+#+begin_test
+This project was inspired the excellent article [[https://fasterthanli.me/articles/whats-in-a-rainbow-table][What's In A Rainbow Table?]], but I did my best to keep my implementation distinct from it.
+
+You can open this file in Emacs and run ~org-babel-tangle~ (aka C-c c-v c-t) to generate source code from it! It's mainly for easier viewing purposes, as you'll need to actually generate a new Rust project yourself and run the ~cargo add~ commands listed throughout this article to actually be able to run it. This writeup itself is distinct from the actual code which has some minor niceities (like loading bars and pretty printing).
+#+end_test
+
+
+* Introduction
+A simple and common hash-cracking technique is to brute-force the hash. This can be done in a bit more of a straightforward manner by precomputing a large table of hashes from a set of plaintexts, then comparing any new hash to those in the table to quickly verify if the hash is the same as the hash of a known plaintext. The one major issue with this is that disk space is limited. Just doing some back of the envelope calculations in Python, we can see that we're either going to need to start buying hard drives in bulk or think of a better strategy:
+
+#+begin_src python :tangle disk_size.py
+  disk_size = 2e+12 # 2TB hard drive
+  hash_size = 20 # standard SHA-1 output size
+  alphabet = 62 # only alphanumeric for now
+  i = 1
+  while hash_size*(alphabet**i) < disk_size:
+      print("{}% of disk space needed for hashes of all {} char passwords"
+            .format((hash_size*(alphabet**i))/disk_size * 100, i))
+      i+=1
+#+end_src
+
+#+begin_src
+6.2e-08% of disk space needed for hashes of all 1 char passwords
+3.844e-06% of disk space needed for hashes of all  2 char passwords
+0.000238328% of disk space needed for hashes of all 3 char passwords
+0.014776336% of disk space needed for hashes of all 4 char passwords
+0.9161328320000001% of disk space needed for hashes of all 5 char passwords
+56.800235584000006% of disk space needed for hashes of all 6 char passwords
+#+end_src
+
+Ouch! 6 characters isn't very long - and that's only for alphanumeric passwords. What if the user had some special character in their password? This doesn't seem very feasible.
+
+* A Solution
+/Rainbow tables/ offer a unique solution to take up far less space while covering roughly the same amount of potential hashes. Instead of hashing every possible plaintext, we generate /rainbow chains/. To generate a rainbow chain, we start with a random plaintext like "rainbow", hash it, apply a /reduction function/ that produces a new and unique plaintext from that like "topical", hash that, apply a reduction function, again, etc. for however long we wish. We then save the first plaintext (in this case "rainbow") and the final hash. Since our chain generation process is deterministic, we can always regenerate the chain given the start and stop point.
+
+Let's try to make our own to crack SHA-1 hashes!
+
+#+begin_warning Ethical Note
+This project is intended for learning purposes only and intentionally targets an old standard to prevent actual use.
+Unauthorized access to computer systems is both unethical and a crime. More specifically, the state of California defines that "any person who commits any of the following acts is guilty of a public offense":
+
+#+begin_quot California Penal Code 502(c)(1-3\, 6\, 7)
+- /Knowingly accesses and without permission alters, damages, deletes, destroys, or otherwise uses any data, computer, computer system, or computer network in order to either (A) devise or execute any scheme or artifice to defraud, deceive, or extort, or (B) wrongfully control or obtain money, property, or data./
+
+- /Knowingly accesses and without permission takes, copies, or makes use of any data from a computer, computer system, or computer network, or takes or copies any supporting documentation, whether existing or residing internal or external to a computer, computer system, or computer network./
+
+- /Knowingly and without permission uses or causes to be used computer services./
+
+- /Knowingly and without permission provides or assists in providing a means of accessing a computer, computer system, or computer network in violation of this section./
+
+- /Knowingly and without permission accesses or causes to be accessed any computer, computer system, or computer network./
+#+end_quot
+
+If you crack someone's password accidentally, the ethical thing to do is to disclose it privately and responsibly to them.
+#+end_warning
+
+* Boilerplate
+
+#+begin_src bash
+  cargo add rand
+  cargo add openssl
+#+end_src
+
+#+begin_aside =cargo add=
+~cargo add~ is part of ~cargo-edit~, which can be installed via ~cargo install cargo-edit~.
+#+end_aside
+
+
+#+begin_src rust :tangle rainbow.rs :noweb strip-export
+  use rand::{thread_rng, Rng, seq::SliceRandom};
+  use openssl::sha::sha1;
+  <<rayon-include>>
+#+end_src
+
+Our hashes are 20-byte arrays, so let's define a type alias to be a bit more concise.
+#+begin_src rust :tangle rainbow.rs
+  const HASH_SIZE: usize = 20;
+  type Hash = [u8; HASH_SIZE];
+#+end_src
+
+** Character Sets
+Let's implement our own character set that's sampleable by ~std::rand~. We'll stick with any ASCII character between 0 and z for now, since that'll make writing our reduction function slightly easier.
+#+begin_src rust :tangle rainbow.rs
+  struct Charset;
+  
+  impl rand::distributions::Distribution<u8> for Charset {
+      fn sample<R: Rng + ?Sized>(&self, rng: &mut R) -> u8 {
+          *"0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz"
+              .to_string().into_bytes().choose(rng).unwrap()
+      }
+  }
+#+end_src
+
+* Chains
+Let's make a simple struct to represent our chain:
+#+begin_src rust :tangle rainbow.rs
+  struct RainbowChain {
+    initial: Vec<u8>,
+    last: Hash,
+  }
+#+end_src
+
+We can then implement a simple ~forward~ function that computes the entire chain given a starting plaintext:
+#+begin_src rust :tangle rainbow.rs
+  impl RainbowChain {
+      fn forward(original: Vec<u8>, len: usize) -> RainbowChain {	
+          let mut hash: Hash = sha1(&original);
+          for i in 0..len/2 {
+              hash = sha1(&reduce(&hash, original.len()));
+          }
+          RainbowChain {
+              initial: original,
+              last: hash,
+          }
+      }
+  }
+#+end_src
+
+* Reduction Functions
+Reduction functions provide a whole set of issues: we need a set of functions that will generate lots of _unique_ plaintexts from hashes. If there's duplicates in our table, lookup will be harder (as if the end hash for a chain is found in other places, we might stop there when we snouldn't!) and we'll waste a lot of space.
+
+For now, we'll generate a plaintext by adding the column number to each byte of the hash, taking the modulo and adding the correct offset to make sure it falls within our character set, and chopping it off so that it fits our password size.
+#+begin_src rust :tangle no
+  fn reduce(hash &Hash, i: u64, pass_size: usize) -> Vec<u8> {
+      hash.map(|c| (((c as u64 + i as u64) % 75) + 48))[..pass_size].collect();
+  }
+#+end_src
+
+* Tables
+Let's set up some basic boilerplate for a rainbow table: a small ~RainbowMetadata~ struct for storing related info and a ~RainbowTable~ struct that is essentially just a vector of ~RainbowChain~. 
+#+begin_src rust
+struct RainbowMetadata {
+    chain_len: usize,
+    num_chains: usize,
+    pass_size: usize,
+}
+
+struct RainbowTable {
+    info: RainbowMetadata,
+    chains: Vec<RainbowChain>,    
+}
+#+end_src
+
+* Parallelizing
+
+Generating a lot of these chains could still get slow, so let's leverage the [[https://crates.io/crates/rayon][rayon]] library for free data parallelism. 
+#+begin_src bash
+cargo add rayon
+#+end_src
+
+Let's not forget to put the ~rayon~ prelude at the top to import all the important bits of the library:
+#+NAME: rayon-include
+#+begin_src rust :tangle no
+  use rayon::prelude::*;
+#+end_src
+
+With ~rayon~ we can replace a normal ~.iter()~ call with a ~.par_iter()~, which does our parallelization for us.
+
+* Generation
+#+begin_src rust :tangle rainbow.rs :noweb strip-export
+  impl RainbowTable {
+      fn new(chain_len: usize, num_chains: usize, pass_size: usize) -> RainbowTable {
+          let mut r = RainbowTable {
+              info: RainbowMetadata {
+                  chain_len,
+                  num_chains,
+                  pass_size,
+              },
+              chains: Vec::new(),
+          };
+  
+          for _i in 0..r.info.num_chains {
+              // Keep trying to generate unique plaintext
+              loop {
+                  let plaintext: Vec<u8> = thread_rng()
+                      .sample_iter(&Charset)
+                      .take(r.info.pass_size)
+                      .collect();
+                  if initials.insert(plaintext.clone()) {		    
+                      r.chains.push(RainbowChain {initial: plaintext,
+                                                  last: [0; HASH_SIZE]});
+                      break;
+                  }
+              }
+          }
+          <<unique-initial>>
+  
+          // Generate chains in parallel
+              r.chains = r.chains.par_iter()
+              .map(|i| RainbowChain::forward(i.initial.clone(), r.info.chain_len))
+              .collect::<Vec<RainbowChain>>();
+          <<sort-table>>          
+              r
+      }
+  }
+#+end_src
+
+You'll notice this function doesn't actually initialize the chains. We could do that like this (before we actually generate the chains) for now, but as we'll see later, it may be worth tweaking a bit.
+
+#+begin_src rust :tangle no
+  for _i in 0..r.info.num_chains {
+        // Keep trying to generate unique plaintext
+      let plaintext: Vec<u8> = thread_rng()
+          .sample_iter(&Charset)
+          .take(r.info.pass_size)
+          .collect();
+      r.chains.push(RainbowChain {initial: plaintext, last: [0; HASH_SIZE]});
+  
+  }
+#+end_src
+
+* Lookup
+We've entirely ignored how to look up a hash from a rainbow table up until now, but the actual process of getting a plaintext comes in two phases.
+
+First, we compare our hash against all of the final hashes for each chain. If it matches one of them, simply recompute that chain starting from the chain's initial plaintext and return the final plaintext (which is what the final hash is of). This is the ideal and fastest case.
+
+If it /isn't/ the same as any of the final hashes, we apply the traditional rainbow chain process to the hash we have, running the reduction function on it, hashing the new plaintext, etc. Each time we generate a new hash in this step, we compare it against all of the final hashes of the other chains. If it matches one, we use the initial value for that chain and generate up until the hash we're trying to look up, and return the last plaintext (which will therefore be the plaintext of our hash). This acts as a sort of "guess and check" with where in the chain the hash might be -  with the first reduce, hash, and comparison being  "is it one column before the end of a chain?", then the second "is it two columns before?", etc. This does the mean the worst case (that it's the first column of a chain) is equivalent to reading an entire table, since we're checking each row for each column. 
+
+Let's implement the first step. One key optimization we can quickly make before we start, however, is sorting the table by its hashes so that we can do binary search (which is ~O(log n)~) to check if a hash is in one of the chains' end values instead of comparing all of the hashes (which is ~O(n)~). We can add a quick one-liner to sort the rainbow table ~r~ we generate in ~RainbowTable::new()~ at the end of the function:
+#+NAME: sort-table
+#+begin_src rust :tangle no
+  // Sort chains for very fast lookup
+  r.chains.sort_by(|a,b| b.last.cmp(&a.last));
+#+end_src
+
+Now we can implement the two steps needed for lookup and make use of binary search for a quicker lookup time:
+#+begin_src rust :tangle rainbow.rs
+  impl RainbowTable {
+      fn check_column(&self, target: Hash) -> Option<String> {
+          let a = self.chains.binary_search_by(|i| target.cmp(&i.last));
+          if let Ok(c) = a {	    
+              let mut string: Vec<u8> = self.chains.get(c).unwrap().initial.clone();
+              let mut hash: Hash = sha1(&string);
+              for i in 0..self.info.chain_len/2 {
+                  string = reduce(&hash, self.info.pass_size);
+                  hash = sha1(&string);
+              }
+              return Some(String::from_utf8(string).unwrap());
+          }
+          return None;
+      }
+      fn check_rows(&self, target: Hash) -> Option<String> {
+          let mut hash: Hash = target;
+          let mut string: Vec<u8>;
+          for i in 0..self.info.chain_len/2 {
+              string = reduce(&hash, self.info.pass_size);
+              hash = sha1(&string);
+              let a = self.chains.binary_search_by(|i| hash.cmp(&i.last));
+              if let Ok(c) = a {
+                  let mut string2 = self.chains.get(c).unwrap().initial.clone();
+                  let mut hash2: Hash = sha1(&string2);
+                  for k in 0..self.info.chain_len/2 {
+                      if hash2 == target {
+                          return Some(String::from_utf8(string2).unwrap());
+                      }
+                      string2 = reduce(&hash2, self.info.pass_size);
+                      hash2 = sha1(&string2);
+                  }
+              }
+          }
+          return None;
+      }
+  }
+#+end_src
+
+Finally, we can write a little ~RainbowTable::lookup()~ function that combines these steps. 
+#+begin_src rust :tangle rainbow.rs
+  impl RainbowTable {
+      fn lookup(&self, target: Hash) -> Option<String> {
+          if let Some(string) = self.check_column(target) {
+              return Some(string);
+          } else {
+              return self.check_rows(target);	    
+          }
+      }
+  }
+#+end_src
+
+* Duplicates
+If one were to experiment with this table, you would find one key problem: there is a /ton/ of duplicates. Duplicates can cause chains to have duplicate end values, which both wastes space and slows down or even potentially ruins hash lookup. Duplicates are (theoretically) caused by a poor set of initial plaintexts, a poor reduction function, and a rainbow table that is much larger than your search space (if your rainbow table is bigger than the number of possible combinations of passwords, you'll have duplicates).
+
+Let's try and address these issues.
+** Better Initial Values
+We'll tweak our initial plaintext generation by forcing it to generate a unique starting plaintext by checking if it can be successfully inserted into a set data structure and generating another if it can't.
+
+#+NAME: unique-initial
+#+begin_src rust :tangle no
+  // Only allow unique initial plaintexts
+  let mut initials: HashSet<Vec<u8>> = HashSet::new();    
+  for _i in 0..r.info.num_chains {
+      // Keep trying to generate unique plaintext
+      loop {
+          let plaintext: Vec<u8> = thread_rng()
+              .sample_iter(&Charset)
+              .take(r.info.pass_size)
+              .collect();
+          if initials.insert(plaintext.clone()) {		    
+              r.chains.push(RainbowChain {initial: plaintext, last: [0; HASH_SIZE]});
+              break;
+          }
+      }
+  }
+#+end_src
+
+** Better Reduction Functions
+If we're being really desperate (which we are, because we have a lot of duplicates!) we could try and seed a random number generator with the hash and generate a plaintext from that. 
+
+#+begin_src bash
+  cargo add rand_pcg
+  cargo add rand_seeder
+#+end_src
+
+#+begin_src rust :tangle rainbow.rs
+  // Prefix `i` with an underscore to say won't be using it (keep it for compatibility).
+  fn reduce(hash &Hash, pass_size: usize) -> Vec<u8> {
+      let rng: rand_pcg::Pcg64 = rand_seeder::Seeder::from(hash).make_rng();
+      rng.sample_iter(&Charset)
+          .take(pass_size)
+          .collect()
+  }
+#+end_src
+
+Is this that much better? In theory, yes, as it should produce very random values. In reality, the results aren't too much better.
+
+* Potential Improvements
+There's a lot to improve on in this design - first off, this implementation is plagued by duplicate values for larger tables, so writing an improved reduction function or addressing this in another matter would improve accuracy and peformance.
+
+Hashing takes up most of the time, so either fine-tuning a custom CPU implementation or restructuring to allow utilization of the GPU would speed the generation process up dramatically.
+
+You can also optimize the file size by converting the plaintexts to numbers - if you have a set password size, you can assign a number to each permutation and store the plaintext as a u64 or u128.
+
+* Response
+Rainbow tables are quite old at this point, and they have generally ceased to be relevant in the place of GPUs. Additionally, the response to this optimized password-cracking technique was to add "salt" to a password, which means adding a small random string of characters (usually dependent on the user) to the end of their password, and then hashing /that/. Despite the optimizations rainbow tables provide, exponential growth still trumps all in the end, so the table size increase needed to account for this starts to become problematic (especially since generating intelligent initial plaintexts like the most common passwords no longer works).
