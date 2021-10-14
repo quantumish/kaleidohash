@@ -110,7 +110,7 @@ We can then implement a simple ~forward~ function that computes the entire chain
   impl RainbowChain {
       fn forward(original: Vec<u8>, len: usize) -> RainbowChain {	
           let mut hash: Hash = sha1(&original);
-          for i in 0..len/2 {
+          for _i in 0..len/2 {
               hash = sha1(&reduce(&hash, original.len()));
           }
           RainbowChain {
@@ -236,7 +236,7 @@ Now we can implement the two steps needed for lookup and make use of binary sear
           if let Ok(c) = a {	    
               let mut string: Vec<u8> = self.chains.get(c).unwrap().initial.clone();
               let mut hash: Hash = sha1(&string);
-              for i in 0..self.info.chain_len/2 {
+              for _i in 0..self.info.chain_len/2 {
                   string = reduce(&hash, self.info.pass_size);
                   hash = sha1(&string);
               }
@@ -247,14 +247,14 @@ Now we can implement the two steps needed for lookup and make use of binary sear
       fn check_rows(&self, target: Hash) -> Option<String> {
           let mut hash: Hash = target;
           let mut string: Vec<u8>;
-          for i in 0..self.info.chain_len/2 {
+          for _i in 0..self.info.chain_len/2 {
               string = reduce(&hash, self.info.pass_size);
               hash = sha1(&string);
               let a = self.chains.binary_search_by(|i| hash.cmp(&i.last));
               if let Ok(c) = a {
                   let mut string2 = self.chains.get(c).unwrap().initial.clone();
                   let mut hash2: Hash = sha1(&string2);
-                  for k in 0..self.info.chain_len/2 {
+                  for _k in 0..self.info.chain_len/2 {
                       if hash2 == target {
                           return Some(String::from_utf8(string2).unwrap());
                       }
