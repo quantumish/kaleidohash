@@ -21,4 +21,4 @@ You can run the code with:
 cargo run --release --bin kaleidohash
 ```
 
-You can experiment with the code by modifying the `main()` function by tweaking the arguments to `RainbowTable::new()` or adding/removing elements to `targets` (examples are visible within `main`).
+You can experiment with the code by modifying the `main()` function by tweaking the arguments to `RainbowTable::new()` - `main()` will then generate 100 random hashes and print any successful password cracks.
